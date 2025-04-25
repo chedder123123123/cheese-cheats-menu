@@ -1,0 +1,261 @@
+using UnityEngine;
+using UnityEngine.XR;
+using UnityEngine.XR.Interaction.Toolkit;
+using System.Collections.Generic;
+
+public class CheeseCheatsMenu : MonoBehaviour
+{
+    public float flySpeed = 5f;
+    public float platformSize = 1f;
+    public float longArmMultiplier = 2f;
+    public Material lineMaterial;
+    public Texture2D cheeseTexture;
+
+    private bool noClipEnabled = false;
+    private bool showGUI = false;
+    private bool isFlying = false;
+    private bool armsExtended = false;
+    private bool teleportGunEnabled = false;
+
+    private GameObject leftArm;
+    private GameObject rightArm;
+
+    private XRNode inputSource = XRNode.RightHand;
+    private Vector2 inputAxis;
+    private InputDevice device;
+
+    private XRRayInteractor rayInteractor;
+
+    private List<LineRenderer> espLines = new List<LineRenderer>();
+
+    private GUIStyle rgbButtonStyle;
+    private float hue = 0f;
+    private Texture2D rgbBackground;
+
+    private List<Vector2> cheesePositions = new List<Vector2>();
+    private List<Vector2> cheeseVelocities = new List<Vector2>();
+
+    private float armLengthSlider = 2f;
+
+    private void Start()
+    {
+        leftArm = transform.Find("LeftArm")?.gameObject;
+        rightArm = transform.Find("RightArm")?.gameObject;
+
+        device = InputDevices.GetDeviceAtXRNode(inputSource);
+
+        rayInteractor = GetComponentInChildren<XRRayInteractor>();
+
+        rgbButtonStyle = new GUIStyle(GUI.skin.button);
+
+        for (int i = 0; i < 10; i++)
+        {
+            cheesePositions.Add(new Vector2(Random.Range(10, Screen.width - 20), Random.Range(10, Screen.height - 20)));
+            cheeseVelocities.Add(new Vector2(Random.Range(-1f, 1f), Random.Range(-1f, 1f)));
+        }
+    }
+
+    void Update()
+    {
+        device.TryGetFeatureValue(CommonUsages.primary2DAxis, out inputAxis);
+
+        HandleGuiToggle();
+        DisableFingerMovement();
+        UpdateESP();
+        HandleTeleportGun();
+
+        if (!showGUI) return;
+
+        UpdateRGBStyle();
+        UpdateCheesePositions();
+
+        if (armsExtended)
+        {
+            if (leftArm) leftArm.transform.localScale = new Vector3(1, 1, armLengthSlider);
+            if (rightArm) rightArm.transform.localScale = new Vector3(1, 1, armLengthSlider);
+        }
+    }
+
+    void ToggleFly() => isFlying = !isFlying;
+    void ToggleNoClip() => ToggleNoClip(noClipEnabled = !noClipEnabled);
+    void ToggleArmLength() => armsExtended = !armsExtended;
+
+    void HandleFlying()
+    {
+        if (isFlying && !noClipEnabled)
+        {
+            transform.position += Vector3.up * flySpeed * Time.deltaTime;
+        }
+    }
+
+    void ToggleNoClip(bool enable)
+    {
+        Collider col = GetComponent<Collider>();
+        Rigidbody rb = GetComponent<Rigidbody>();
+
+        if (col != null) col.enabled = !enable;
+        if (rb != null)
+        {
+            rb.useGravity = !enable;
+            rb.velocity = Vector3.zero;
+        }
+    }
+
+    void HandleNoClipMovement()
+    {
+        if (!noClipEnabled) return;
+
+        Vector3 moveDirection = new Vector3(inputAxis.x, 0, inputAxis.y);
+        transform.position += transform.TransformDirection(moveDirection) * flySpeed * Time.deltaTime;
+    }
+
+    void SpawnPlatform()
+    {
+        GameObject platform = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        platform.transform.localScale = new Vector3(platformSize, 0.2f, platformSize);
+        platform.transform.position = transform.position - new Vector3(0, 1.2f, 0);
+        platform.GetComponent<Renderer>().material.color = Color.green;
+
+        Rigidbody rb = platform.AddComponent<Rigidbody>();
+        rb.isKinematic = true;
+    }
+
+    void HandleGuiToggle()
+    {
+        if (device.TryGetFeatureValue(CommonUsages.primaryButton, out bool guiToggle) && guiToggle)
+        {
+            showGUI = !showGUI;
+        }
+    }
+
+    void DisableFingerMovement()
+    {
+        Animator animator = GetComponent<Animator>();
+        if (animator)
+        {
+            animator.SetFloat("Grip", 0f);
+            animator.SetFloat("Trigger", 0f);
+        }
+    }
+
+    void HandleTeleportGun()
+    {
+        if (!teleportGunEnabled || rayInteractor == null) return;
+
+        if (device.TryGetFeatureValue(CommonUsages.triggerButton, out bool triggerPressed) && triggerPressed)
+        {
+            if (rayInteractor.TryGetCurrent3DRaycastHit(out RaycastHit hit))
+            {
+                transform.position = hit.point + Vector3.up * 1.5f;
+            }
+        }
+    }
+
+    void UpdateESP()
+    {
+        foreach (var line in espLines)
+        {
+            Destroy(line.gameObject);
+        }
+        espLines.Clear();
+
+        GameObject[] players = GameObject.FindGameObjectsWithTag("Player");
+        foreach (var player in players)
+        {
+            if (player == this.gameObject) continue;
+
+            Transform head = player.transform.Find("Head");
+            Transform handL = player.transform.Find("LeftHand");
+            Transform handR = player.transform.Find("RightHand");
+
+            if (head && handL && handR)
+            {
+                DrawLine(head.position, handL.position);
+                DrawLine(head.position, handR.position);
+            }
+        }
+    }
+
+    void DrawLine(Vector3 start, Vector3 end)
+    {
+        GameObject lineObj = new GameObject("ESPLine");
+        LineRenderer lr = lineObj.AddComponent<LineRenderer>();
+        lr.positionCount = 2;
+        lr.SetPosition(0, start);
+        lr.SetPosition(1, end);
+        lr.startWidth = 0.02f;
+        lr.endWidth = 0.02f;
+        lr.material = lineMaterial;
+        espLines.Add(lr);
+    }
+
+    void UpdateRGBStyle()
+    {
+        hue += Time.deltaTime * 0.2f;
+        if (hue > 1f) hue = 0f;
+        Color rgbColor = Color.HSVToRGB(hue, 1f, 1f);
+        rgbButtonStyle.normal.textColor = Color.black;
+        rgbButtonStyle.normal.background = MakeTex(2, 2, rgbColor);
+        rgbBackground = MakeTex(Screen.width, Screen.height, rgbColor);
+    }
+
+    void UpdateCheesePositions()
+    {
+        for (int i = 0; i < cheesePositions.Count; i++)
+        {
+            cheesePositions[i] += cheeseVelocities[i];
+
+            if (cheesePositions[i].x < 0 || cheesePositions[i].x > Screen.width - 20)
+                cheeseVelocities[i] = new Vector2(-cheeseVelocities[i].x, cheeseVelocities[i].y);
+            if (cheesePositions[i].y < 0 || cheesePositions[i].y > Screen.height - 20)
+                cheeseVelocities[i] = new Vector2(cheeseVelocities[i].x, -cheeseVelocities[i].y);
+        }
+    }
+
+    Texture2D MakeTex(int width, int height, Color col)
+    {
+        Color[] pix = new Color[width * height];
+        for (int i = 0; i < pix.Length; ++i)
+            pix[i] = col;
+        Texture2D result = new Texture2D(width, height);
+        result.SetPixels(pix);
+        result.Apply();
+        return result;
+    }
+
+    private void OnGUI()
+    {
+        if (!showGUI) return;
+
+        GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), rgbBackground);
+
+        foreach (var pos in cheesePositions)
+        {
+            GUI.DrawTexture(new Rect(pos.x, pos.y, 20, 20), cheeseTexture);
+        }
+
+        GUI.Box(new Rect(10, 10, 220, 320), "Cheese Cheats");
+
+        if (GUI.Button(new Rect(20, 40, 180, 25), isFlying ? "Disable Fly" : "Enable Fly", rgbButtonStyle))
+            ToggleFly();
+
+        if (GUI.Button(new Rect(20, 70, 180, 25), noClipEnabled ? "Disable No-Clip" : "Enable No-Clip", rgbButtonStyle))
+            ToggleNoClip();
+
+        if (GUI.Button(new Rect(20, 100, 180, 25), "Spawn Platform", rgbButtonStyle))
+            SpawnPlatform();
+
+        if (GUI.Button(new Rect(20, 130, 180, 25), armsExtended ? "Disable Long Arms" : "Enable Long Arms", rgbButtonStyle))
+            ToggleArmLength();
+
+        GUI.Label(new Rect(20, 160, 180, 20), "Arm Length: " + armLengthSlider.ToString("F1"));
+        armLengthSlider = GUI.HorizontalSlider(new Rect(20, 180, 180, 20), armLengthSlider, 1f, 5f);
+
+        if (GUI.Button(new Rect(20, 210, 180, 25), teleportGunEnabled ? "Disable Teleport Gun" : "Enable Teleport Gun", rgbButtonStyle))
+            teleportGunEnabled = !teleportGunEnabled;
+
+        GUI.Label(new Rect(20, 240, 180, 20), "No Finger Movement Enabled");
+        GUI.Label(new Rect(20, 260, 180, 20), "ESP Skeleton Active");
+        GUI.Label(new Rect(20, 280, 180, 20), "[A/X] Toggle Menu");
+    }
+}
